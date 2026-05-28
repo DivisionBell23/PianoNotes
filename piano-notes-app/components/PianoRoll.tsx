@@ -6,8 +6,8 @@ import type { NoteSystem } from '@/lib/note-names'
 import { getMidiNoteName, getMidiNoteNameWithOctave } from '@/lib/note-names'
 
 // ── Layout constants ──────────────────────────────────────────────────────────
-const COL_W      = 12   // px per semitone (X axis = pitch)
-const PX_PER_SEC = 80   // px per second   (Y axis = time, grows downward)
+const MIN_colW  = 12   // minimum px per semitone
+const PX_PER_SEC = 80   // px per second (Y axis = time, grows downward)
 const KEY_H      = 52   // keyboard strip height (fixed at top)
 const BLACK_KEYS = new Set([1, 3, 6, 8, 10])
 
@@ -24,10 +24,12 @@ function fmtTime(s: number) {
 export default function PianoRoll({ midiData, noteSystem, labelColor }: Props) {
   const { notes, durationSeconds, tracks, bpm, songName, fileName } = midiData
 
-  const [playing, setPlaying] = useState(false)
-  const [elapsed, setElapsed] = useState(0)
+  const [playing,      setPlaying]      = useState(false)
+  const [elapsed,      setElapsed]      = useState(0)
+  const [containerW,   setContainerW]   = useState(800)
 
-  const scrollRef  = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const scrollRef    = useRef<HTMLDivElement>(null)
   const toneRef    = useRef<typeof import('tone') | null>(null)
   const synthRef   = useRef<any>(null)
   const partRef    = useRef<any>(null)
@@ -45,12 +47,14 @@ export default function PianoRoll({ midiData, noteSystem, labelColor }: Props) {
   }, [notes])
 
   const pitchRange = maxMidi - minMidi + 1
-  const rollW      = pitchRange * COL_W                           // total SVG width
+  // Stretch columns to fill the container; never narrower than MIN_colW
+  const colW       = Math.max(MIN_colW, containerW / pitchRange)
+  const rollW      = pitchRange * colW
   const rollH      = Math.ceil(durationSeconds + 2) * PX_PER_SEC // total SVG height
   const multiTrack = tracks.length > 1
 
   // pitch → x coordinate
-  function pitchToX(midi: number) { return (midi - minMidi) * COL_W }
+  function pitchToX(midi: number) { return (midi - minMidi) * colW }
 
   const timeMarkers = useMemo(() => {
     const step = durationSeconds > 180 ? 30 : durationSeconds > 90 ? 15 : 10
@@ -155,6 +159,18 @@ export default function PianoRoll({ midiData, noteSystem, labelColor }: Props) {
 
   useEffect(() => { stopPlayback(false) }, [midiData, stopPlayback])
 
+  // Measure container width so colW fills the available space
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const ro = new ResizeObserver(entries => {
+      setContainerW(entries[0].contentRect.width)
+    })
+    ro.observe(el)
+    setContainerW(el.clientWidth)
+    return () => ro.disconnect()
+  }, [])
+
   // ── Render ─────────────────────────────────────────────────────────────────
   const progress   = durationSeconds > 0 ? Math.min(elapsed / durationSeconds, 1) : 0
   const title      = songName || fileName.replace(/\.[^.]+$/, '')
@@ -238,7 +254,7 @@ export default function PianoRoll({ midiData, noteSystem, labelColor }: Props) {
       </div>
 
       {/* Piano roll: keyboard fixed on top, roll scrolls vertically below */}
-      <div className="rounded-xl overflow-hidden border border-gray-700 bg-gray-950">
+      <div ref={containerRef} className="rounded-xl overflow-hidden border border-gray-700 bg-gray-950">
 
         {/* Fixed horizontal keyboard strip */}
         <div className="border-b border-gray-700 bg-gray-900 overflow-hidden" style={{ height: KEY_H }}>
@@ -248,17 +264,17 @@ export default function PianoRoll({ midiData, noteSystem, labelColor }: Props) {
               const pc      = midi % 12
               const isBlack = BLACK_KEYS.has(pc)
               const isC     = pc === 0
-              const x       = i * COL_W
+              const x       = i * colW
               return (
                 <g key={midi}>
                   <rect
-                    x={x} y={0} width={COL_W} height={KEY_H}
+                    x={x} y={0} width={colW} height={KEY_H}
                     fill={isBlack ? '#1f2937' : '#f1f5f9'}
                     stroke="#374151" strokeWidth={0.5}
                   />
                   {isC && (
                     <text
-                      x={x + COL_W / 2} y={KEY_H - 4}
+                      x={x + colW / 2} y={KEY_H - 4}
                       textAnchor="middle"
                       fontSize={7}
                       fontFamily="Arial, Helvetica, sans-serif"
@@ -291,8 +307,8 @@ export default function PianoRoll({ midiData, noteSystem, labelColor }: Props) {
               const isBlack = BLACK_KEYS.has(midi % 12)
               return (
                 <rect key={midi}
-                  x={i * COL_W} y={0}
-                  width={COL_W} height={rollH}
+                  x={i * colW} y={0}
+                  width={colW} height={rollH}
                   fill={isBlack ? '#1e293b' : '#0f172a'}
                 />
               )
@@ -336,14 +352,14 @@ export default function PianoRoll({ midiData, noteSystem, labelColor }: Props) {
               return (
                 <g key={i}>
                   <rect
-                    x={x + 1} y={y} width={COL_W - 2} height={h}
+                    x={x + 1} y={y} width={colW - 2} height={h}
                     rx={1.5} ry={1.5}
                     fill={color}
                     opacity={0.45 + note.velocity * 0.55}
                   />
                   {h >= 14 && (
                     <text
-                      x={x + COL_W / 2} y={y + h - 3}
+                      x={x + colW / 2} y={y + h - 3}
                       textAnchor="middle"
                       fontSize={7}
                       fontFamily="Arial, Helvetica, sans-serif"
