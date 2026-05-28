@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
-import type { MidiData } from '@/lib/midi-loader'
+import type { MidiData, MidiNote } from '@/lib/midi-loader'
 import type { NoteSystem } from '@/lib/note-names'
 import { getMidiNoteName, getMidiNoteNameWithOctave } from '@/lib/note-names'
 
@@ -21,6 +21,68 @@ function fmtTime(s: number) {
   return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 }
 
+// ── Draw the keyboard strip onto a canvas ─────────────────────────────────────
+function drawKeyboard(
+  canvas: HTMLCanvasElement,
+  minMidi: number,
+  maxMidi: number,
+  colW: number,
+  noteSystem: NoteSystem,
+  activeMidis: Set<number>,
+  trackColors: Record<number, string>,
+  multiTrack: boolean,
+  labelColor: string,
+) {
+  const pitchRange = maxMidi - minMidi + 1
+  const W = pitchRange * colW
+  const dpr = window.devicePixelRatio || 1
+
+  if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(KEY_H * dpr)) {
+    canvas.width  = Math.round(W * dpr)
+    canvas.height = Math.round(KEY_H * dpr)
+    canvas.style.width  = W + 'px'
+    canvas.style.height = KEY_H + 'px'
+  }
+
+  const ctx = canvas.getContext('2d')!
+  ctx.resetTransform()
+  ctx.scale(dpr, dpr)
+  ctx.clearRect(0, 0, W, KEY_H)
+
+  for (let i = 0; i < pitchRange; i++) {
+    const midi    = minMidi + i
+    const pc      = midi % 12
+    const isBlack = BLACK_KEYS.has(pc)
+    const isC     = pc === 0
+    const x       = i * colW
+    const active  = activeMidis.has(midi)
+
+    // Key background
+    if (active) {
+      // Lit up: use track color or labelColor, lighter for white keys
+      const base = multiTrack ? (trackColors[midi] ?? labelColor) : labelColor
+      ctx.fillStyle = isBlack ? base : base + 'cc'
+    } else {
+      ctx.fillStyle = isBlack ? '#1f2937' : '#f1f5f9'
+    }
+    ctx.fillRect(x, 0, colW, KEY_H)
+
+    // Border
+    ctx.strokeStyle = '#374151'
+    ctx.lineWidth   = 0.5
+    ctx.strokeRect(x, 0, colW, KEY_H)
+
+    // C label
+    if (isC) {
+      ctx.fillStyle   = active ? 'white' : (isBlack ? '#9ca3af' : '#374151')
+      ctx.font        = `bold 7px Arial, Helvetica, sans-serif`
+      ctx.textAlign   = 'center'
+      ctx.textBaseline = 'alphabetic'
+      ctx.fillText(getMidiNoteNameWithOctave(midi, noteSystem), x + colW / 2, KEY_H - 4)
+    }
+  }
+}
+
 export default function PianoRoll({ midiData, noteSystem, labelColor }: Props) {
   const { notes, durationSeconds, tracks, bpm, songName, fileName } = midiData
 
@@ -28,13 +90,14 @@ export default function PianoRoll({ midiData, noteSystem, labelColor }: Props) {
   const [elapsed,    setElapsed]    = useState(0)
   const [containerW, setContainerW] = useState(800)
 
-  const containerRef = useRef<HTMLDivElement>(null)
-  const scrollRef    = useRef<HTMLDivElement>(null)
-  const canvasRef    = useRef<HTMLCanvasElement>(null)
-  const toneRef      = useRef<typeof import('tone') | null>(null)
-  const synthRef     = useRef<any>(null)
-  const partRef      = useRef<any>(null)
-  const rafRef       = useRef<number | undefined>(undefined)
+  const containerRef  = useRef<HTMLDivElement>(null)
+  const scrollRef     = useRef<HTMLDivElement>(null)
+  const rollCanvasRef = useRef<HTMLCanvasElement>(null)
+  const keyCanvasRef  = useRef<HTMLCanvasElement>(null)
+  const toneRef       = useRef<typeof import('tone') | null>(null)
+  const synthRef      = useRef<any>(null)
+  const partRef       = useRef<any>(null)
+  const rafRef        = useRef<number | undefined>(undefined)
 
   // ── Pitch range ────────────────────────────────────────────────────────────
   const { minMidi, maxMidi } = useMemo(() => {
@@ -53,6 +116,15 @@ export default function PianoRoll({ midiData, noteSystem, labelColor }: Props) {
   const rollH      = Math.ceil(durationSeconds + 2) * PX_PER_SEC
   const multiTrack = tracks.length > 1
 
+  // midi → track color lookup (for keyboard highlights)
+  const midiToTrackColor = useMemo(() => {
+    const map: Record<number, string> = {}
+    for (const n of notes) {
+      map[n.midi] = tracks[n.trackIndex]?.color ?? labelColor
+    }
+    return map
+  }, [notes, tracks, labelColor])
+
   function pitchToX(midi: number) { return (midi - minMidi) * colW }
 
   const timeMarkers = useMemo(() => {
@@ -68,9 +140,9 @@ export default function PianoRoll({ midiData, noteSystem, labelColor }: Props) {
     return out
   }, [minMidi, maxMidi])
 
-  // ── Draw roll to canvas ────────────────────────────────────────────────────
+  // ── Draw roll canvas (once per layout/data change) ─────────────────────────
   useEffect(() => {
-    const canvas = canvasRef.current
+    const canvas = rollCanvasRef.current
     if (!canvas || rollW === 0 || rollH === 0) return
     const dpr = window.devicePixelRatio || 1
     canvas.width  = rollW * dpr
@@ -81,7 +153,7 @@ export default function PianoRoll({ midiData, noteSystem, labelColor }: Props) {
     const ctx = canvas.getContext('2d')!
     ctx.scale(dpr, dpr)
 
-    // 1. Background pitch columns
+    // Background columns
     for (let i = 0; i < pitchRange; i++) {
       const midi    = minMidi + i
       const isBlack = BLACK_KEYS.has(midi % 12)
@@ -89,83 +161,92 @@ export default function PianoRoll({ midiData, noteSystem, labelColor }: Props) {
       ctx.fillRect(i * colW, 0, colW, rollH)
     }
 
-    // 2. C guide lines
+    // C guide lines
     ctx.strokeStyle = '#334155'
     ctx.lineWidth   = 1
     ctx.setLineDash([4, 3])
     for (const midi of cPitches) {
       const x = pitchToX(midi)
-      ctx.beginPath()
-      ctx.moveTo(x, 0)
-      ctx.lineTo(x, rollH)
-      ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, rollH); ctx.stroke()
     }
     ctx.setLineDash([])
 
-    // 3. Time grid + labels
+    // Time grid + labels
     ctx.strokeStyle = '#1f2937'
     ctx.lineWidth   = 1
-    ctx.fillStyle   = '#6b7280'
     ctx.font        = '8px Arial, Helvetica, sans-serif'
+    ctx.textBaseline = 'alphabetic'
     for (const t of timeMarkers) {
       const y = t * PX_PER_SEC
-      ctx.beginPath()
-      ctx.moveTo(0, y)
-      ctx.lineTo(rollW, y)
-      ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(rollW, y); ctx.stroke()
       ctx.fillStyle = '#6b7280'
       ctx.fillText(fmtTime(t), 3, y + 10)
     }
 
-    // 4. Notes
+    // Notes
+    ctx.textAlign = 'center'
     for (const note of notes) {
       const x     = pitchToX(note.midi)
       const y     = note.time * PX_PER_SEC
       const h     = Math.max(2, note.duration * PX_PER_SEC)
-      const w     = colW - 2
-      const color = multiTrack
-        ? (tracks[note.trackIndex]?.color ?? '#6366f1')
-        : labelColor
-      const alpha = 0.45 + note.velocity * 0.55
+      const color = multiTrack ? (tracks[note.trackIndex]?.color ?? '#6366f1') : labelColor
 
-      ctx.globalAlpha = alpha
+      ctx.globalAlpha = 0.45 + note.velocity * 0.55
       ctx.fillStyle   = color
       ctx.beginPath()
-      ctx.roundRect(x + 1, y, w, h, 1.5)
+      ctx.roundRect(x + 1, y, colW - 2, h, 1.5)
       ctx.fill()
 
-      // Label — only when tall enough
       if (h >= 14) {
-        ctx.globalAlpha = 1
-        ctx.fillStyle   = 'white'
-        ctx.font        = 'bold 7px Arial, Helvetica, sans-serif'
-        ctx.textAlign   = 'center'
-        ctx.fillText(
-          getMidiNoteName(note.midi, noteSystem),
-          x + colW / 2,
-          y + h - 3
-        )
+        ctx.globalAlpha  = 1
+        ctx.fillStyle    = 'white'
+        ctx.font         = 'bold 7px Arial, Helvetica, sans-serif'
+        ctx.textBaseline = 'alphabetic'
+        ctx.fillText(getMidiNoteName(note.midi, noteSystem), x + colW / 2, y + h - 3)
       }
     }
     ctx.globalAlpha = 1
   }, [notes, colW, rollW, rollH, pitchRange, minMidi, noteSystem, labelColor,
       multiTrack, tracks, cPitches, timeMarkers]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Draw keyboard (called initially and from rAF) ──────────────────────────
+  const redrawKeyboard = useCallback((activeMidis: Set<number>) => {
+    const canvas = keyCanvasRef.current
+    if (!canvas) return
+    drawKeyboard(canvas, minMidi, maxMidi, colW, noteSystem,
+      activeMidis, midiToTrackColor, multiTrack, labelColor)
+  }, [minMidi, maxMidi, colW, noteSystem, midiToTrackColor, multiTrack, labelColor])
+
+  // Initial keyboard draw (no active keys)
+  useEffect(() => { redrawKeyboard(new Set()) }, [redrawKeyboard])
+
   // ── rAF tick ───────────────────────────────────────────────────────────────
+  const notesRef = useRef<MidiNote[]>(notes)
+  useEffect(() => { notesRef.current = notes }, [notes])
+
   const tick = useCallback(() => {
     const Tone = toneRef.current
     if (!Tone) return
-    const transportT = Tone.Transport.seconds
-    const lookAhead  = (Tone as any).getContext?.()?.lookAhead ?? 0.1
-    const visualT    = Math.max(0, transportT - lookAhead)
-    if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, visualT * PX_PER_SEC)
-    setElapsed(transportT)
-    if (transportT < durationSeconds + 2) {
+    const t = Tone.Transport.seconds
+
+    // Scroll: note top edge hits keyboard exactly when Transport.seconds = note.time
+    if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, t * PX_PER_SEC)
+
+    // Active notes at time t
+    const active = new Set<number>()
+    for (const n of notesRef.current) {
+      if (n.time <= t && t < n.time + n.duration) active.add(n.midi)
+    }
+    redrawKeyboard(active)
+
+    setElapsed(t)
+
+    if (t < durationSeconds + 2) {
       rafRef.current = requestAnimationFrame(tick)
     } else {
       stopPlayback(true)
     }
-  }, [durationSeconds]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [durationSeconds, redrawKeyboard]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Stop helper ────────────────────────────────────────────────────────────
   const stopPlayback = useCallback((finished = false) => {
@@ -175,9 +256,10 @@ export default function PianoRoll({ midiData, noteSystem, labelColor }: Props) {
     partRef.current?.dispose()
     partRef.current = null
     if (!finished && scrollRef.current) scrollRef.current.scrollTop = 0
+    redrawKeyboard(new Set())
     setPlaying(false)
     setElapsed(0)
-  }, [])
+  }, [redrawKeyboard])
 
   // ── Play / Pause ───────────────────────────────────────────────────────────
   async function handlePlay() {
@@ -317,43 +399,18 @@ export default function PianoRoll({ midiData, noteSystem, labelColor }: Props) {
       {/* Piano roll */}
       <div ref={containerRef} className="rounded-xl overflow-hidden border border-gray-700 bg-gray-950">
 
-        {/* Keyboard strip (SVG — small, static) */}
+        {/* Keyboard canvas — redrawn each frame to show active keys */}
         <div className="border-b border-gray-700 bg-gray-900 overflow-hidden" style={{ height: KEY_H }}>
-          <svg width={rollW} height={KEY_H} style={{ display: 'block' }}>
-            {Array.from({ length: pitchRange }, (_, i) => {
-              const midi    = minMidi + i
-              const pc      = midi % 12
-              const isBlack = BLACK_KEYS.has(pc)
-              const isC     = pc === 0
-              const x       = i * colW
-              return (
-                <g key={midi}>
-                  <rect x={x} y={0} width={colW} height={KEY_H}
-                    fill={isBlack ? '#1f2937' : '#f1f5f9'}
-                    stroke="#374151" strokeWidth={0.5}
-                  />
-                  {isC && (
-                    <text x={x + colW / 2} y={KEY_H - 4}
-                      textAnchor="middle" fontSize={7}
-                      fontFamily="Arial, Helvetica, sans-serif" fontWeight="bold"
-                      fill={isBlack ? '#9ca3af' : '#374151'}
-                    >
-                      {getMidiNoteNameWithOctave(midi, noteSystem)}
-                    </text>
-                  )}
-                </g>
-              )
-            })}
-          </svg>
+          <canvas ref={keyCanvasRef} style={{ display: 'block' }} />
         </div>
 
-        {/* Canvas roll — drawn once, browser scrolls it for free */}
+        {/* Roll canvas — drawn once, scrolled natively */}
         <div
           ref={scrollRef}
           className="overflow-y-auto overflow-x-hidden"
           style={{ maxHeight: '65vh', scrollBehavior: 'auto' }}
         >
-          <canvas ref={canvasRef} style={{ display: 'block' }} />
+          <canvas ref={rollCanvasRef} style={{ display: 'block' }} />
         </div>
       </div>
     </div>
