@@ -30,8 +30,7 @@ export default function PianoRoll({ midiData, noteSystem, labelColor }: Props) {
   const [elapsed,  setElapsed]  = useState(0)
 
   // DOM refs — updated directly in rAF loop to avoid re-renders
-  const scrollRef    = useRef<HTMLDivElement>(null)
-  const playheadRef  = useRef<SVGLineElement>(null)
+  const scrollRef   = useRef<HTMLDivElement>(null)
 
   // Tone.js refs
   const toneRef  = useRef<typeof import('tone') | null>(null)
@@ -78,16 +77,9 @@ export default function PianoRoll({ midiData, noteSystem, labelColor }: Props) {
     const t = Tone.Transport.seconds
     const x = t * PX_PER_SEC
 
-    // Move playhead line directly (no React state)
-    if (playheadRef.current) {
-      playheadRef.current.setAttribute('x1', String(x))
-      playheadRef.current.setAttribute('x2', String(x))
-    }
-
-    // Auto-scroll: keep playhead at ~30% from left
+    // Auto-scroll: current time stays ~32px from the left edge (near the keyboard)
     if (scrollRef.current) {
-      const containerW = scrollRef.current.clientWidth
-      scrollRef.current.scrollLeft = Math.max(0, x - containerW * 0.3)
+      scrollRef.current.scrollLeft = Math.max(0, x - 32)
     }
 
     setElapsed(t)
@@ -110,10 +102,6 @@ export default function PianoRoll({ midiData, noteSystem, labelColor }: Props) {
     partRef.current?.dispose()
     partRef.current = null
 
-    if (playheadRef.current) {
-      playheadRef.current.setAttribute('x1', '0')
-      playheadRef.current.setAttribute('x2', '0')
-    }
     if (!finished && scrollRef.current) scrollRef.current.scrollLeft = 0
 
     setPlaying(false)
@@ -388,13 +376,6 @@ export default function PianoRoll({ midiData, noteSystem, labelColor }: Props) {
               )
             })}
 
-            {/* Playhead — updated directly via ref */}
-            <line
-              ref={playheadRef}
-              x1={0} y1={0} x2={0} y2={rollH + HEADER_H}
-              stroke="#f87171" strokeWidth={2}
-              style={{ pointerEvents: 'none' }}
-            />
           </svg>
         </div>
       </div>
