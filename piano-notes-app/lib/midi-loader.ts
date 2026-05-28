@@ -16,6 +16,7 @@ export interface MidiTrackMeta {
 
 export interface MidiData {
   fileName: string
+  songName: string        // from MIDI header, or '' if not present
   durationSeconds: number
   bpm: number
   tracks: MidiTrackMeta[]
@@ -64,6 +65,7 @@ export async function loadMidi(file: File): Promise<MidiData> {
 
   return {
     fileName: file.name,
+    songName: midi.header.name ?? '',
     durationSeconds: midi.duration,
     bpm,
     tracks,
