@@ -69,22 +69,26 @@ export default function PianoRoll({ midiData, noteSystem, labelColor }: Props) {
     return out
   }, [minMidi, maxMidi])
 
-  // ── rAF tick — drives playhead + auto-scroll ───────────────────────────────
+  // ── rAF tick — drives auto-scroll ─────────────────────────────────────────
   const tick = useCallback(() => {
     const Tone = toneRef.current
     if (!Tone) return
 
-    const t = Tone.Transport.seconds
-    const x = t * PX_PER_SEC
+    const transportT = Tone.Transport.seconds
+    // Subtract look-ahead so the keyboard edge matches what's audible right now
+    const lookAhead  = (Tone as any).getContext?.()?.lookAhead ?? 0.1
+    const visualT    = Math.max(0, transportT - lookAhead)
+    const x          = visualT * PX_PER_SEC
 
-    // Auto-scroll: current time stays ~32px from the left edge (near the keyboard)
+    // Scroll so the current audible moment is right at the left edge
     if (scrollRef.current) {
-      scrollRef.current.scrollLeft = Math.max(0, x - 32)
+      scrollRef.current.scrollLeft = Math.max(0, x)
     }
 
-    setElapsed(t)
+    setElapsed(transportT)
 
-    if (t < durationSeconds + 0.5) {
+    // Keep running for 2s after the music ends so last notes scroll past keyboard
+    if (transportT < durationSeconds + 2) {
       rafRef.current = requestAnimationFrame(tick)
     } else {
       stopPlayback(true)
