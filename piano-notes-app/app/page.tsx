@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import FileUpload from '@/components/FileUpload'
 import SheetViewer from '@/components/SheetViewer'
+import PianoRoll from '@/components/PianoRoll'
+import type { FilePayload } from '@/lib/file-payload'
 import type { NoteSystem } from '@/lib/note-names'
 
 const PRESET_COLORS = [
@@ -14,21 +16,16 @@ const PRESET_COLORS = [
 ]
 
 export default function Home() {
-  const [xmlContent, setXmlContent] = useState<string | null>(null)
-  const [fileName, setFileName] = useState('')
-  const [noteSystem, setNoteSystem] = useState<NoteSystem>('english')
-  const [labelColor, setLabelColor] = useState(PRESET_COLORS[0].hex)
+  const [payload,       setPayload]       = useState<FilePayload | null>(null)
+  const [noteSystem,    setNoteSystem]    = useState<NoteSystem>('english')
+  const [labelColor,    setLabelColor]    = useState(PRESET_COLORS[0].hex)
   const [labelPosition, setLabelPosition] = useState<'outside' | 'ontop'>('outside')
 
-  function handleLoad(xml: string, name: string) {
-    setXmlContent(xml)
-    setFileName(name)
-  }
+  function handleLoad(p: FilePayload) { setPayload(p) }
+  function handleReset() { setPayload(null) }
 
-  function handleReset() {
-    setXmlContent(null)
-    setFileName('')
-  }
+  const isMidi = payload?.type === 'midi'
+  const isXml  = payload?.type === 'xml'
 
   return (
     <div className="min-h-screen bg-gray-950 text-white print:bg-white print:text-black">
@@ -47,7 +44,7 @@ export default function Home() {
 
           <div className="flex-1" />
 
-          {xmlContent && (
+          {payload && (
             <button
               onClick={handleReset}
               className="text-xs text-gray-500 hover:text-white underline whitespace-nowrap"
@@ -57,8 +54,8 @@ export default function Home() {
           )}
         </div>
 
-        {/* Controls row — wraps on small screens */}
-        {xmlContent && (
+        {/* Controls row */}
+        {payload && (
           <div className="flex flex-wrap items-center gap-2 px-3 sm:px-6 pb-2 sm:pb-3">
             {/* Note system toggle */}
             <div className="flex items-center gap-1 bg-gray-800 rounded-lg p-1 text-sm">
@@ -78,61 +75,83 @@ export default function Home() {
               ))}
             </div>
 
-            {/* Label position toggle */}
-            <div className="flex items-center gap-1 bg-gray-800 rounded-lg p-1 text-sm">
-              {(['outside', 'ontop'] as const).map((pos) => (
-                <button
-                  key={pos}
-                  onClick={() => setLabelPosition(pos)}
-                  className={`px-2.5 py-1.5 rounded-md font-medium transition-colors ${
-                    labelPosition === pos
-                      ? 'bg-indigo-600 text-white'
-                      : 'text-gray-400 hover:text-white'
-                  }`}
+            {/* Label position toggle — MusicXML only */}
+            {isXml && (
+              <div className="flex items-center gap-1 bg-gray-800 rounded-lg p-1 text-sm">
+                {(['outside', 'ontop'] as const).map((pos) => (
+                  <button
+                    key={pos}
+                    onClick={() => setLabelPosition(pos)}
+                    className={`px-2.5 py-1.5 rounded-md font-medium transition-colors ${
+                      labelPosition === pos
+                        ? 'bg-indigo-600 text-white'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    {pos === 'outside' ? 'Outside staff' : 'On note'}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Color picker — single-track MIDI or MusicXML */}
+            {(!isMidi || payload.type === 'midi' && payload.data.tracks.length <= 1) && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-gray-400 text-xs">Color</span>
+                {PRESET_COLORS.map(({ hex, label }) => (
+                  <button
+                    key={hex}
+                    title={label}
+                    onClick={() => setLabelColor(hex)}
+                    className="w-6 h-6 rounded-full border-2 transition-transform hover:scale-110"
+                    style={{
+                      backgroundColor: hex,
+                      borderColor: labelColor === hex ? 'white' : 'transparent',
+                    }}
+                  />
+                ))}
+                <label
+                  title="Custom color"
+                  className="w-6 h-6 rounded-full border-2 border-gray-600 overflow-hidden cursor-pointer hover:scale-110 transition-transform"
+                  style={{ backgroundColor: labelColor }}
                 >
-                  {pos === 'outside' ? 'Outside staff' : 'On note'}
-                </button>
-              ))}
-            </div>
+                  <input
+                    type="color"
+                    value={labelColor}
+                    onChange={e => setLabelColor(e.target.value)}
+                    className="opacity-0 w-0 h-0"
+                  />
+                </label>
+              </div>
+            )}
 
-            {/* Label color picker */}
-            <div className="flex items-center gap-1.5">
-              <span className="text-gray-400 text-xs">Color</span>
-              {PRESET_COLORS.map(({ hex, label }) => (
-                <button
-                  key={hex}
-                  title={label}
-                  onClick={() => setLabelColor(hex)}
-                  className="w-6 h-6 rounded-full border-2 transition-transform hover:scale-110"
-                  style={{
-                    backgroundColor: hex,
-                    borderColor: labelColor === hex ? 'white' : 'transparent',
-                  }}
-                />
-              ))}
-              {/* Custom color */}
-              <label title="Custom color" className="w-6 h-6 rounded-full border-2 border-gray-600 overflow-hidden cursor-pointer hover:scale-110 transition-transform" style={{ backgroundColor: labelColor }}>
-                <input
-                  type="color"
-                  value={labelColor}
-                  onChange={e => setLabelColor(e.target.value)}
-                  className="opacity-0 w-0 h-0"
-                />
-              </label>
-            </div>
-
-            {/* File name (desktop only) */}
-            <span className="hidden sm:block text-gray-500 text-xs truncate max-w-[160px] ml-auto">{fileName}</span>
+            {/* File name (desktop) */}
+            <span className="hidden sm:block text-gray-500 text-xs truncate max-w-[160px] ml-auto">
+              {payload.fileName}
+            </span>
           </div>
         )}
       </header>
 
       {/* Main content */}
       <main className="max-w-5xl mx-auto px-4 py-8 print:max-w-none print:p-0 print:m-0">
-        {xmlContent ? (
-          <SheetViewer xmlContent={xmlContent} noteSystem={noteSystem} labelColor={labelColor} labelPosition={labelPosition} />
-        ) : (
+        {!payload && (
           <FileUpload onLoad={handleLoad} />
+        )}
+        {isXml && (
+          <SheetViewer
+            xmlContent={payload.content}
+            noteSystem={noteSystem}
+            labelColor={labelColor}
+            labelPosition={labelPosition}
+          />
+        )}
+        {isMidi && (
+          <PianoRoll
+            midiData={payload.data}
+            noteSystem={noteSystem}
+            labelColor={labelColor}
+          />
         )}
       </main>
     </div>

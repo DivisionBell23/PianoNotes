@@ -2,9 +2,11 @@
 
 import { useCallback, useState } from 'react'
 import { loadMusicXml } from '@/lib/mxl-loader'
+import { loadMidi } from '@/lib/midi-loader'
+import type { FilePayload } from '@/lib/file-payload'
 
 interface Props {
-  onLoad: (xmlContent: string, fileName: string) => void
+  onLoad: (payload: FilePayload) => void
 }
 
 export default function FileUpload({ onLoad }: Props) {
@@ -17,8 +19,14 @@ export default function FileUpload({ onLoad }: Props) {
       setError(null)
       setLoading(true)
       try {
-        const xml = await loadMusicXml(file)
-        onLoad(xml, file.name)
+        const name = file.name.toLowerCase()
+        if (name.endsWith('.mid') || name.endsWith('.midi')) {
+          const data = await loadMidi(file)
+          onLoad({ type: 'midi', data, fileName: file.name })
+        } else {
+          const content = await loadMusicXml(file)
+          onLoad({ type: 'xml', content, fileName: file.name })
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unknown error')
       } finally {
@@ -52,7 +60,7 @@ export default function FileUpload({ onLoad }: Props) {
         <div className="text-7xl mb-4 select-none">🎼</div>
         <h2 className="text-3xl font-bold text-white mb-2">PianoNotes</h2>
         <p className="text-gray-400 text-lg">
-          Upload a MusicXML file to annotate your piano sheet
+          Upload a sheet music file to annotate note names
         </p>
       </div>
 
@@ -68,7 +76,7 @@ export default function FileUpload({ onLoad }: Props) {
       >
         <input
           type="file"
-          accept=".mxl,.xml,.musicxml"
+          accept=".mxl,.xml,.musicxml,.mid,.midi"
           className="hidden"
           onChange={handleChange}
         />
@@ -83,7 +91,7 @@ export default function FileUpload({ onLoad }: Props) {
             <p className="text-gray-200 font-medium mb-1">
               Drop your file here, or click to browse
             </p>
-            <p className="text-gray-500 text-sm">Supports .mxl and .xml (MusicXML)</p>
+            <p className="text-gray-500 text-sm">MusicXML (.mxl, .xml) · MIDI (.mid, .midi)</p>
           </>
         )}
       </label>
