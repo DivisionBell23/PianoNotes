@@ -59,9 +59,7 @@ function drawKeyboard(
 
     // Key background
     if (active) {
-      // Lit up: use track color or labelColor, lighter for white keys
-      const base = multiTrack ? (trackColors[midi] ?? labelColor) : labelColor
-      ctx.fillStyle = isBlack ? base : base + 'cc'
+      ctx.fillStyle = multiTrack ? (trackColors[midi] ?? labelColor) : labelColor
     } else {
       ctx.fillStyle = isBlack ? '#1f2937' : '#f1f5f9'
     }
@@ -74,7 +72,7 @@ function drawKeyboard(
 
     // C label
     if (isC) {
-      ctx.fillStyle   = active ? 'white' : (isBlack ? '#9ca3af' : '#374151')
+      ctx.fillStyle   = active ? 'white' : isBlack ? '#9ca3af' : '#374151'
       ctx.font        = `bold 7px Arial, Helvetica, sans-serif`
       ctx.textAlign   = 'center'
       ctx.textBaseline = 'alphabetic'
